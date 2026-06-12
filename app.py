@@ -298,7 +298,6 @@ section[data-testid="stSidebar"]{
     color: #e2e8f0 !important;
 }
 
-/* ইতিহাস বাটনগুলোর টেক্সট পজিশন এবং রিডেবিলিটি */
 [data-testid="stSidebar"] .stButton button {
     background: rgba(255, 255, 255, 0.05) !important;
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
@@ -319,7 +318,6 @@ section[data-testid="stSidebar"]{
     transform: none !important;
 }
 
-/* স্পেসিফিক ডিলিট বাটন (✕) মডিফিকেশন */
 div[data-testid="stSidebar"] div[data-testid="column"]:nth-child(2) button {
     background: rgba(239, 68, 68, 0.15) !important;
     border: 1px solid rgba(239, 68, 68, 0.3) !important;
@@ -369,11 +367,10 @@ with st.sidebar:
         for idx, item in enumerate(reversed(st.session_state.history)):
             real_index = len(st.session_state.history) - 1 - idx
             
-            # লেআউট বন্টন (৮২% টপিক বাটন, ১৮% ডিলিট বাটন) যাতে সাইডবারে সোজা লাইনে থাকে
             col1, col2 = st.columns([0.82, 0.18])
             
             with col1:
-                # নাম খুব বড় হলে কেটে যাবে যেন বাটন লাইনের বাইরে না যায়
+                
                 display_name = item['topic'][:18] + "..." if len(item['topic']) > 18 else item['topic']
                 if st.button(f"📄 {display_name}", key=f"hist_view_{real_index}", use_container_width=True):
                     st.session_state.active_data = item
