@@ -17,7 +17,7 @@ import pytesseract
 import cv2
 import numpy as np
 
-# Tesseract Executable Local Binary Routing
+# Tesseract Executable Local Binary Routing -
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # Page config
