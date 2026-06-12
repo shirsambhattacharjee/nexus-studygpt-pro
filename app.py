@@ -16,6 +16,10 @@ import time
 import pytesseract
 import cv2
 import numpy as np
+import hashlib
+
+# Load environment variables at the very beginning
+load_dotenv()
 
 # Tesseract Executable Local Binary Routing -
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -28,7 +32,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Session state initialization
+# Initialize Session State Variables for Theme and Goals
 if "app_theme" not in st.session_state:
     st.session_state.app_theme = "Dark Mode 🌌"
 
@@ -38,155 +42,66 @@ if "goal" not in st.session_state:
 if "pending_goal" not in st.session_state:
     st.session_state.pending_goal = ""    
 
-# ==========================================
-# CONFIG & INITIALIZATION
-# ==========================================
-load_dotenv()
-HISTORY_FILE = "history.json"
 
-# Initialize Session State Variables
-if "history" not in st.session_state:
-    if os.path.exists(HISTORY_FILE):
+# CONFIG & INITIALIZATION (MULTI-USER SETUP)
+
+BASE_HISTORY_FILE = "history_v2.json"
+USER_DB_FILE = "users_db.json"
+
+# SECURE CONFIGURATION: Pulling Master Admin Email from Environment/Secrets
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@domain.com").strip().lower()
+
+# Helper function to hash passwords securely
+def hash_password(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+# Load all users database
+def load_users():
+    if os.path.exists(USER_DB_FILE):
         try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                st.session_state.history = json.load(f)
+            with open(USER_DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
         except Exception:
-            st.session_state.history = []
-    else:
-        st.session_state.history = []
+            return {}
+    return {}
 
-if "active_data" not in st.session_state:
-    st.session_state.active_data = None
+# Save users database
+def save_user(email, password):
+    users = load_users()
+    users[email] = hash_password(password)
+    with open(USER_DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, indent=2)
 
-if "quiz_scores" not in st.session_state:
-    st.session_state.quiz_scores = {}
-
-# ==========================================
-# HELPER FUNCTIONS
-# ==========================================
-
-def extract_file_content(uploaded_file):
-    text = ""
-    if uploaded_file.type == "application/pdf":
-        with st.spinner("🔮 OCR Engine running with High-Resolution Binary Enhancement..."):
-            try:
-                file_bytes = uploaded_file.read()
-                try:
-                    images = convert_from_bytes(file_bytes, dpi=300)
-                except Exception:
-                    images = convert_from_bytes(file_bytes, dpi=300, poppler_path=r"C:\poppler\Library\bin")
-                
-                for i, image in enumerate(images):
-                    open_cv_image = np.array(image.convert('RGB'))
-                    gray = cv2.cvtColor(open_cv_image, cv2.COLOR_BGR2GRAY)
-                    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-                    page_text = pytesseract.image_to_string(thresh, lang='eng', config='--psm 6')
-                    if page_text.strip():
-                        text += f"--- Page {i+1} ---\n" + page_text + "\n"
-            except Exception as e:
-                st.error(f"🚨 OCR Processing Error: {e}")
-                text = ""
-                
-    elif uploaded_file.type.endswith("wordprocessingml.document"):
-        doc = docx.Document(uploaded_file)
-        for para in doc.paragraphs:
-            text += para.text + "\n"
-    elif uploaded_file.type == "text/plain":
-        text = uploaded_file.read().decode("utf-8")
-    return text
-
-def create_pdf(topic, notes):
-    filename = f"{topic.replace(' ', '_')}.pdf"
-    doc = SimpleDocTemplate(filename)
-    styles = getSampleStyleSheet()
-    content = [
-        Paragraph(f"<b>{topic}</b>", styles["Title"]),
-        Paragraph(notes.replace("\n", "<br/>"), styles["BodyText"])
-    ]
-    doc.build(content)
-    return filename
-
-def save_history(history):
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2)
-
-def clear_history():
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump([], f)
-    st.session_state.history = []
-    st.session_state.active_data = None
-    st.rerun()
-
-# ==========================================
-# API SETUP & INTUITIVE MODEL ROUTING
-# ==========================================
-api_key = os.getenv("GROQ_API_KEY")
-if not api_key:
-    st.error("Missing GROQ_API_KEY in .env file")
-    st.stop()
-
-client_fast = ChatOpenAI(
-    api_key=api_key,
-    base_url="https://api.groq.com/openai/v1",
-    model="llama-3.1-8b-instant",
-    temperature=0.2,
-    timeout=20.0,
-    max_retries=3
-)
-
-client_smart = ChatOpenAI(
-    api_key=api_key,
-    base_url="https://api.groq.com/openai/v1",
-    model="llama-3.3-70b-versatile",
-    temperature=0.2,
-)
-
-groq_raw_client = Groq(api_key=api_key)
-
-# ==========================================
-# SAFETY FILTER
-# ==========================================
-BLOCKED_WORDS = {"bomb", "weapon", "hack", "malware"}
-
-def is_safe(text):
-    words = re.sub(r"[^\w\s]", "", text.lower()).split()
-    return not any(word in BLOCKED_WORDS for word in words)
-
-# ==========================================
-# AGENT CORE ORCHESTRATOR WITH RETRY & LIMIT CONTROL
-# ==========================================
-def run_agent(role, instruction, target_input, retries=4, initial_delay=4):
-    if role in ["EXPERT_WRITER", "QUIZ_GENERATOR"]:
-        selected_client = client_smart
-    else:
-        selected_client = client_fast
-    delay = initial_delay
-    for attempt in range(retries):
+# Load global multi-user history structure
+def load_global_history():
+    if os.path.exists(BASE_HISTORY_FILE):
         try:
-            response = selected_client.invoke([
-                {"role": "system", "content": f"You are the {role}. {instruction}"},
-                {"role": "user", "content": target_input[:4000]}
-            ])
-            return response.content
+            with open(BASE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
 
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "rate limit" in error_msg or "429" in error_msg or "connection" in error_msg or "timeout" in error_msg or "overloaded" in error_msg:
-                if attempt < retries - 1:
-                    st.warning(f"⚠️ API/Network Congestion on {role}. Retrying in {delay}s... (Attempt {attempt+1}/{retries})")
-                    time.sleep(delay)
-                    delay *= 2  
-                    continue
-                else:
-                    st.error(f"🚨 Network link or API Token window completely exhausted for {role}.")
-                    return f"Error: Connection/Rate Outage for {role}. Please attempt compilation again."
-            raise e
+# Save global multi-user history structure
+def save_global_history(all_history):
+    with open(BASE_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(all_history, f, indent=2)
 
-# ==========================================
-# ADVANCED THEMING & UI DESIGN (CUSTOM CSS)
-# ==========================================
+# Helper function to validate email structure
+def is_valid_email(email):
+    pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+    return re.match(pattern, email) is not None
+
+# User Session State Initialization
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = None
+
+# Global styling injection - NUCLEAR OPTION FOR BOX REMOVING
 st.markdown("""
 <style>
+/* Global Layout Enhancements */
 .block-container{
     max-width:1200px;
     padding-top:1rem;
@@ -199,15 +114,75 @@ st.markdown("""
     #050816 !important;
     transition:all .4s ease;
 }
+
+/* Dynamic Glassmorphism Auth UI Design */
+.auth-wrapper {
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+    
+}
+.auth-title {
+    font-size: 32px;
+    font-weight: 800;
+    text-align: center;
+    background: linear-gradient(90deg, #60a5fa, #818cf8, #22d3ee);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 5px;
+    letter-spacing: -0.5px;
+}
+.auth-subtitle {
+    color: #94a3b8;
+    text-align: center;
+    font-size: 14px;
+    margin-bottom: 25px;
+}
+
+/* ULTIMATE FIX: Destroying Streamlit Tabs Inner Borders & Ghost Black Boxes */
+div[data-testid="stTabs"] {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+div[data-testid="stTabs"] [data-testid="stVerticalBlock"] {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0px !important;
+    margin: 0px !important;
+}
+div[data-testid="stTabs"] > div {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    background-color: transparent !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+    padding: 0px !important;
+}
+div[data-testid="stTabs"] [data-baseweb="tab"] {
+    background-color: transparent !important;
+    border: none !important;
+    color: #94a3b8 !important;
+}
+div[data-testid="stTabs"] [aria-selected="true"] {
+    color: #22d3ee !important;
+    border-bottom: 2px solid #22d3ee !important;
+}
+
+/* Core Element Custom Layouts */
 .hero-container{
     text-align:center;
     padding-top:10px;
     padding-bottom:25px;
 }
 .hero-title{
-    font-size:clamp(70px,8vw,120px);
+    font-size:clamp(50px,6vw,90px);
     font-weight:900;
-    line-height:1;
+    line-height:1.1;
     background:linear-gradient(90deg,#60a5fa,#818cf8,#22d3ee);
     background-size:300% 300%;
     -webkit-background-clip:text;
@@ -291,9 +266,6 @@ section[data-testid="stSidebar"]{
     100%{ background-position:0% 50%; }
 }
 
-/* ==========================================
-   SIDEBAR READABILITY & CLEANUP FIXES
-   ========================================== */
 [data-testid="stSidebar"] {
     color: #e2e8f0 !important;
 }
@@ -354,14 +326,235 @@ div[data-testid="stSidebar"] div[data-testid="column"]:nth-child(2) button:hover
     p{
         font-size:14px !important;
     }
-}
+}        
+
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
+# MULTI-USER LOGIN AND REGISTER INTERFACE (CLEANED)
+
+if not st.session_state.authenticated:
+    st.markdown("<div style='margin-top: 5%;'></div>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align:center;' class='hero-title'>⚡ NEXUS StudyGPT Pro</h1>", unsafe_allow_html=True)
+    
+    # Unified Premium Glassmorphic Container
+    st.markdown('<div class="auth-wrapper">', unsafe_allow_html=True)
+    st.markdown('<p class="auth-title">Cognitive Gateway Portal</p>', unsafe_allow_html=True)
+    st.markdown('<p class="auth-subtitle">Verify cryptographic credentials to spin up neural engines</p>', unsafe_allow_html=True)
+    
+    auth_mode = st.tabs(["🔒 Secure Authorization", "🚀 Deploy New Account"])
+    
+    with auth_mode[0]:
+        login_user = st.text_input("📬 Email Identifier Address", placeholder="username@domain.com", key="login_user_input")
+        login_pass = st.text_input("🔑 Cryptographic Password Token", type="password", placeholder="••••••••", key="login_pass_input")
+        if st.button("Initialize Quantum Session Layer", use_container_width=True):
+            users = load_users()
+            clean_email = login_user.strip().lower()
+            if clean_email in users and users[clean_email] == hash_password(login_pass):
+                st.session_state.authenticated = True
+                st.session_state.username = clean_email
+                global_history = load_global_history()
+                st.session_state.history = global_history.get(clean_email, [])
+                st.success(f"Access granted. Synchronizing node profile...")
+                st.rerun()
+            else:
+                st.error("Invalid credentials sequence or configuration profile mapping.")
+                
+    with auth_mode[1]:
+        reg_user = st.text_input("📬 Registration Email Account", placeholder="user@domain.com", key="reg_user_input")
+        reg_pass = st.text_input("🔑 Setup Secure Password Sequence", type="password", placeholder="Minimum 6 characters", key="reg_pass_input")
+        reg_confirm = st.text_input("🔄 Confirm Cryptographic Sequence", type="password", placeholder="Repeat matching password", key="reg_confirm_input")
+        if st.button("Compile Structural Node Profile", use_container_width=True):
+            users = load_users()
+            clean_reg_email = reg_user.strip().lower()
+            if not clean_reg_email or not reg_pass.strip():
+                st.error("Data parameters missing inside transaction script.")
+            elif not is_valid_email(clean_reg_email):
+                st.error("Invalid structural configuration layout inside your Mail ID.")
+            elif clean_reg_email in users:
+                st.error("Identity matrix collision: Email already verified in master table.")
+            elif reg_pass != reg_confirm:
+                st.error("Cryptographic token matching validation failed.")
+            else:
+                save_user(clean_reg_email, reg_pass)
+                st.success("Identity compiled! Swap tabs to initialize standard session authorization.")
+                
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.stop()
+
+# Re-verify and match current logged user dynamic reference constraints
+current_user = st.session_state.username
+global_history = load_global_history()
+
+if "history" not in st.session_state or not st.session_state.history:
+    st.session_state.history = global_history.get(current_user, [])
+
+if "active_data" not in st.session_state:
+    st.session_state.active_data = None
+
+if "quiz_scores" not in st.session_state:
+    st.session_state.quiz_scores = {}
+
+# HELPER FUNCTIONS
+
+def extract_file_content(uploaded_file):
+    text = ""
+    if uploaded_file.type == "application/pdf":
+        with st.spinner("🔮 OCR Engine running with High-Resolution Binary Enhancement..."):
+            try:
+                file_bytes = uploaded_file.read()
+                try:
+                    images = convert_from_bytes(file_bytes, dpi=300)
+                except Exception:
+                    images = convert_from_bytes(file_bytes, dpi=300, poppler_path=r"C:\poppler\Library\bin")
+                
+                for i, image in enumerate(images):
+                    open_cv_image = np.array(image.convert('RGB'))
+                    gray = cv2.cvtColor(open_cv_image, cv2.COLOR_BGR2GRAY)
+                    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+                    page_text = pytesseract.image_to_string(thresh, lang='eng', config='--psm 6')
+                    if page_text.strip():
+                        text += f"--- Page {i+1} ---\n" + page_text + "\n"
+            except Exception as e:
+                st.error(f"🚨 OCR Processing Error: {e}")
+                text = ""
+                
+    elif uploaded_file.type.endswith("wordprocessingml.document"):
+        doc = docx.Document(uploaded_file)
+        for para in doc.paragraphs:
+            text += para.text + "\n"
+    elif uploaded_file.type == "text/plain":
+        text = uploaded_file.read().decode("utf-8")
+    return text
+
+def create_pdf(topic, notes):
+    filename = f"{topic.replace(' ', '_')}.pdf"
+    doc = SimpleDocTemplate(filename)
+    styles = getSampleStyleSheet()
+    content = [
+        Paragraph(f"<b>{topic}</b>", styles["Title"]),
+        Paragraph(notes.replace("\n", "<br/>"), styles["BodyText"])
+    ]
+    doc.build(content)
+    return filename
+
+def save_history(history):
+    all_hist = load_global_history()
+    all_hist[st.session_state.username] = history
+    save_global_history(all_hist)
+
+def clear_history():
+    all_hist = load_global_history()
+    all_hist[st.session_state.username] = []
+    save_global_history(all_hist)
+    st.session_state.history = []
+    st.session_state.active_data = None
+    st.rerun()
+
+
+# API SETUP & INTUITIVE MODEL ROUTING
+
+api_key = os.getenv("GROQ_API_KEY")
+if not api_key:
+    st.error("Missing GROQ_API_KEY in .env file")
+    st.stop()
+
+client_fast = ChatOpenAI(
+    api_key=api_key,
+    base_url="https://api.groq.com/openai/v1",
+    model="llama-3.1-8b-instant",
+    temperature=0.2,
+    timeout=20.0,
+    max_retries=3
+)
+
+client_smart = ChatOpenAI(
+    api_key=api_key,
+    base_url="https://api.groq.com/openai/v1",
+    model="llama-3.3-70b-versatile",
+    temperature=0.2,
+)
+
+groq_raw_client = Groq(api_key=api_key)
+
+
+# SAFETY FILTER
+
+BLOCKED_WORDS = {"bomb", "weapon", "hack", "malware"}
+
+def is_safe(text):
+    words = re.sub(r"[^\w\s]", "", text.lower()).split()
+    return not any(word in BLOCKED_WORDS for word in words)
+
+
+# AGENT CORE ORCHESTRATOR WITH RETRY & LIMIT CONTROL
+
+def run_agent(role, instruction, target_input, retries=4, initial_delay=4):
+    if role in ["EXPERT_WRITER", "QUIZ_GENERATOR"]:
+        selected_client = client_smart
+    else:
+        selected_client = client_fast
+    delay = initial_delay
+    for attempt in range(retries):
+        try:
+            response = selected_client.invoke([
+                {"role": "system", "content": f"You are the {role}. {instruction}"},
+                {"role": "user", "content": target_input[:4000]}
+            ])
+            return response.content
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "rate limit" in error_msg or "429" in error_msg or "connection" in error_msg or "timeout" in error_msg or "overloaded" in error_msg:
+                if attempt < retries - 1:
+                    st.warning(f"⚠️ API/Network Congestion on {role}. Retrying in {delay}s... (Attempt {attempt+1}/{retries})")
+                    time.sleep(delay)
+                    delay *= 2  
+                    continue
+                else:
+                    st.error(f"🚨 Network link or API Token window completely exhausted for {role}.")
+                    return f"Error: Connection/Rate Outage for {role}. Please attempt compilation again."
+            raise e
+
+
 # SIDEBAR NAVIGATION & HISTORY
-# ==========================================
+
 with st.sidebar:
+    st.markdown(f"📬 Active Node: **{st.session_state.username}**")
+    if st.button("🚪 Logout Matrix Workspace", use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.username = None
+        st.session_state.history = []
+        st.session_state.active_data = None
+        st.rerun()
+        
+    st.markdown("---")
+    
+    # MASTER ADMIN BACKDOOR ACCESS PANEL CONTROL
+    if st.session_state.username == ADMIN_EMAIL and ADMIN_EMAIL != "admin@domain.com":
+        with st.expander("👑 Admin Control Panel", expanded=False):
+            st.caption("Active Central Logs Tracking System")
+            all_users_registered = load_users()
+            all_centralized_history = load_global_history()
+            
+            st.markdown(f"**Total Registered Nodes:** `{len(all_users_registered)}`")
+            selected_user_node = st.selectbox("Inspect Active User Data", list(all_users_registered.keys()))
+            
+            if selected_user_node:
+                user_nodes_history = all_centralized_history.get(selected_user_node, [])
+                st.markdown(f"**Cached Log Entities:** `{len(user_nodes_history)}`")
+                if user_nodes_history:
+                    for tracked_idx, tracked_item in enumerate(user_nodes_history):
+                        st.text_area(
+                            f"Topic Log {tracked_idx + 1}: {tracked_item.get('topic')}", 
+                            value=tracked_item.get('notes')[:500] + "\n...[Truncated Output Stream]...", 
+                            height=120,
+                            key=f"admin_track_nodes_{selected_user_node}_{tracked_idx}"
+                        )
+                else:
+                    st.caption("No compiled datasets processed by this specific profile.")
+        st.markdown("---")
+
     st.markdown("### 📜 Recent Compilations")
     if st.session_state.history:
         for idx, item in enumerate(reversed(st.session_state.history)):
@@ -389,9 +582,8 @@ with st.sidebar:
     else:
         st.caption("No historical entities cached inside your local environment.")
 
-# ==========================================
 # MAIN LAYOUT
-# ==========================================
+
 st.markdown("<h1 style='text-align:center;font-size:72px;font-weight:900;' class='hero-title'>⚡ NEXUS StudyGPT Pro</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align:center;font-size:18px;' class='hero-subtitle'>Framer-grade AI Learning & Research OS</p>", unsafe_allow_html=True)
 st.markdown("<p style='color:#94a3b8; text-align:center; font-size:1.1rem; margin-bottom:2rem;'>Cognitive Multi-Agent Workflow Engine for Educational Synthesis</p>", unsafe_allow_html=True)
@@ -432,9 +624,7 @@ with chat_container:
     if manual_deploy:
         execute_pipeline = True
 
-# ==========================================
 # ENGINE PIPELINE EXECUTION
-# ==========================================
 
 if execute_pipeline:
     active_payload = st.session_state.goal.strip()
@@ -487,114 +677,100 @@ if execute_pipeline:
                 level_instruction = "Provide a simple, highly intuitive layout with basic real-world examples."
 
             combined_prompt = f"""
-            You are a premier world-class educator. Compile high-yield comprehensive study notes and a short data facts summary for the topic or raw data given by user: '{search_term}'.
-            Target Academic Baseline Profile: {level}.
-            Special Guideline: {level_instruction}
+            You are a world-class AI educator, examiner, and technical expert.
 
-            IMPORTANT OUTPUT RULE:
+            Your task is to generate structured, high-quality learning material for the topic:
+            '{search_term}'
 
-            Only include sections that are relevant to the topic.
-            Never create empty sections.
-            Never write:
-            "Not Applicable"
-            "Not Relevant"
-            "This section is not applicable"
-            or similar placeholders.
+            Target Academic Level: {level}
+            Instruction Style: {level_instruction}
 
-            If a section is not relevant to the topic, completely omit that section.
+            # 🚨 CRITICAL OUTPUT RULES (MUST FOLLOW STRICTLY)
+
+            1. Only include sections relevant to the topic.
+            2. NEVER write:
+               - "Not Applicable"
+               - "Not Relevant"
+               - "N/A"
+               - empty placeholders
+            3. If something is not relevant → completely OMIT it.
+            4. Do NOT add any extra commentary outside the format.
+            5. Maintain deep educational quality (exam + conceptual clarity).
+
             
-            CRITICAL REQUIREMENT: If the provided context contains 'Student document text', you must base your explanations, definitions, and data core strictly on that text. Do not invent details outside of it, but you can enhance technical clarity using global knowledge.
+             📌 OUTPUT FORMAT (STRICT ORDER)
+            
 
-            Format your entire output strictly matching this schema separated by the delimiter '===END_FACTS===' without any extra sentences:
-            List exactly 15 distinct, high-density bullet points or formula sets for quick revision.
+            First output MUST be:
+
+            List exactly 15 high-density bullet points for quick revision.
+
+            Then write:
+
             ===END_FACTS===
+
+            Then continue sections:
+
             # 1. Introduction & Core Concept
-            Provide an extremely exhaustive, detailed introduction and core background of the topic here. Write long, comprehensive and clear explanatory paragraphs to fully unpack the topic. Do not summarize briefly.
-            
+            - Deep, detailed explanation
+            - Include real-world intuition and background
+            - Expand concepts fully (no short summaries)
+
             # 2. Key Definitions & Specifications
-            Provide comprehensive definitions, core parameters, sub-topics, variants, and standard technical descriptions in detail.
-            
-            # 3. Formulas, Rules & Working Matrix
-            List all essential formulas, mathematical derivations, architecture layouts, or processing rules clearly with rich explanations.
-            
+            - All important terms clearly defined
+            - Include classifications, types, parameters if applicable
+
+            # 3. Formulas / Rules / Core Mechanism
+            - Only if applicable to topic
+            - Include formulas, logic, architecture, or workflows
+            - Explain meaning of each formula/part briefly
+
             # 4. Step-by-Step Solved Examples
-            Provide multiple practical solved examples using real-world scenarios.
+            - MUST include at least 3 examples (if applicable)
+            Each example must contain:
+              Problem
+              Step-by-step solution
+              Final Answer
+              Common Mistakes
 
-            For each example, strictly include:
+            🧠 SMART PROGRAMMING LOGIC (VERY IMPORTANT)
+            
 
-            Problem:
-            Describe a realistic problem statement.
+            If AND ONLY IF the topic is related to:
+            - Programming (C, C++, Python, Java, JS)
+            - Data Structures
+            - Algorithms
+            - DBMS, OS, CN
+            - AI / ML / Software Engineering (technical)
 
-            Step-by-step solution:
-            Explain every step clearly and logically.
-
-            Final answer:
-            Give the final result separately.
-
-            Common mistakes:
-            List common errors students make while solving this type of problem.
-
-            Provide at least 3 detailed examples.
+            THEN include:
 
             # 5. Programming Implementation
 
-            IMPORTANT:
-
-            Only generate this section if the topic is directly related to Computer Science, Programming, Data Structures, Algorithms, DBMS, Operating Systems, Computer Networks, Artificial Intelligence, Machine Learning, Software Engineering, Python, C, C++, Java, or JavaScript.
-
-            For all other topics, completely omit this section and continue directly with the next relevant content.
-
-            Never write:
-            - This section is not applicable
-            - Not relevant
-            - N/A
-            - Any placeholder message
-
-            This section must include:
-
-            1. Concept Overview
-               - Brief explanation of the implementation approach.
-
-            2. Well-Commented Code Examples
-               - Use the most suitable language for the topic.
-               - Provide beginner-friendly and properly commented code.
-               - For Data Structures and Algorithms topics, ALWAYS provide both:
-                 - C Implementation
-                 - Python Implementation
-
-            3. Code Explanation
-               - Explain important functions, variables, and logic step-by-step.
-
-            4. Time and Space Complexity Analysis
-               - Time Complexity
-               - Space Complexity
-               - Best, Average, and Worst Case (if applicable)
-
-            5. Example Input and Output
-               - Show sample input and expected output.
-
-            6. Dry Run
-               - Demonstrate the execution of the code step-by-step using sample data.
-
-            7. Real-World Applications
-               - Explain where the concept is used in practical software systems.
-
-            8. Common Mistakes
-               - List common coding and logical errors students make.
-
-            9. Interview Preparation
-               - Include at least 5 important interview questions with short answers.
-
-            10. Exam & Placement Focus
-
             Include:
+            1. Concept Overview (implementation idea)
+            2. Code in C (mandatory for DSA)
+            3. Code in Python (mandatory for DSA)
+            4. Explanation of logic step-by-step
+            5. Time & Space Complexity
+            6. Dry Run
+            7. Real-world use cases
+            8. Common coding mistakes
+            9. Interview questions (minimum 5)
+            10. Exam + Viva important points
 
-            - Most important university exam questions
-            - Frequently asked coding interview questions
-            - Common viva questions
-            - Top 5 revision points
+            ⚠️ If topic is NOT programming related:
+            → DO NOT generate this section at all (no placeholders, no "not applicable")
 
-            For Data Structures and Algorithms topics, this section is mandatory and must be detailed.
+            
+            🎯 OUTPUT QUALITY RULES
+
+            - Competitive exam topics → focus on shortcuts, formulas, tricks, exam patterns
+            - College topics → deep theoretical + structured explanation
+            - Basic topics → simple explanation with examples
+            - Always prioritize clarity + correctness + exam usefulness
+
+            Now generate the response exactly in the required format.
             """
             st.write("Starting Expert Writer...")
             combined_response = run_agent("EXPERT_WRITER", combined_prompt, context_payload[:3800])
@@ -613,7 +789,6 @@ if execute_pipeline:
                 facts = "Facts compilation processing exception."
                 draft = combined_response.strip()
 
-            
             # 4. EVALUATOR
             status.update(label="🧐 Running Quality Control Audit Matrix...")
             evaluation = run_agent(
@@ -626,8 +801,7 @@ if execute_pipeline:
             status.update(label="📝 Generating Core Concept-Focused MCQ Diagnostic Dataset...")
             quiz_prompt = f"""
             Generate EXACTLY 8 MCQs on {search_term} based on this context: {draft[:2000]}.
-            Return ONLY a valid JSON object matching this schema exactly. No extra characters or wrappers.
-
+            Return ONLY a valid JSON object matching this schema exactly.
             {{
               "questions":[
                 {{
@@ -637,7 +811,6 @@ if execute_pipeline:
                 }}
               ]
             }}
-            Ensure exactly 8 question objects are built.
             """
             try:
                 response = groq_raw_client.chat.completions.create(
@@ -654,7 +827,7 @@ if execute_pipeline:
             status.update(label="🧠 Formatting Visual Memory Flashcards...")
             flashcards_raw = run_agent(
                 "FLASHCARD_GENERATOR",
-                f"Generate exactly 10 high-yield revision flashcards targeting core parameters or solving rules for '{search_term}'. Structure each item clearly with Q: and A: markers. Example formatting:\nQ: What is X?\nA: X is Y.",
+                f"Generate exactly 10 high-yield revision flashcards targeting core parameters or solving rules for '{search_term}'. Structure each item clearly with Q: and A: markers.",
                 draft
             )
             
@@ -675,9 +848,9 @@ if execute_pipeline:
             status.update(label="⚡ Pipeline Tasks Execution Terminated Successfully", state="complete")
         st.rerun()
 
-# ==========================================
+
 # INTERACTIVE DATA PRESENTATION LAYER
-# ==========================================
+
 if st.session_state.active_data:
     data = st.session_state.active_data
     
@@ -790,37 +963,22 @@ if st.session_state.active_data:
                     st.markdown(f"""
                     <div class="glowing-flashcard" style="padding:24px;">
                         <h5 style="color: #818cf8; margin-top: 0; font-weight: 700;">⚡ Flashcard {card_counter}</h5>
-                        <p style="margin-bottom: 12px; font-size: 1.1rem; color: #ffffff;">
-                            <b style="color: #38bdf8;">Question:</b> {q_clean}
-                        </p>
-                        <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08);">
-                            <p style="margin-bottom: 0; color: #cbd5e1; font-size: 1.05rem; line-height: 1.5;">
-                               <b style="color: #34d399; display: block; margin-bottom: 4px;">Answer:</b>{a_clean}
-                            </p>
-                        </div>
+                        <p style="margin-bottom: 12px; font-size: 1.1rem; color: #ffffff;"><b style="color: #38bdf8;">Q:</b> {q_clean}</p>
+                        <p style="margin-top: 4px; font-size: 1rem; color: #cbd5e1;"><b style="color: #34d399;">A:</b> {a_clean}</p>
                     </div>
                     """, unsafe_allow_html=True)
                     card_counter += 1
         else:
-            st.info("No active flashcard repository parsed for this topic.")
-
+            st.info("No structured flashcards found.")
+            
     with tab4:
-        st.subheader("📊 Learning Analytics")
-        if st.session_state.history:
-            topics_list = [item["topic"] for item in st.session_state.history]
-            col_m1, col_m2 = st.columns(2)
-            with col_m1:
-                st.metric("Topics Studied", len(topics_list))
-            with col_m2:
-                if data['topic'] in st.session_state.quiz_scores:
-                    st.metric("Latest Quiz Score", f"{st.session_state.quiz_scores[data['topic']]}/8")
-                else:
-                    st.metric("Latest Quiz Score", "N/A")
-            st.markdown("#### Topic Frequency Distribution Chart")
-            df = pd.DataFrame({"Topics": topics_list})
-            st.bar_chart(df["Topics"].value_counts())
+        st.markdown("### 📊 Learning Diagnostics & Engagement Metrics")
+        if data['topic'] in st.session_state.quiz_scores:
+            latest_score = st.session_state.quiz_scores[data['topic']]
+            st.metric(label="Latest Diagnostic Quiz Performance", value=f"{latest_score} / 8 Correct")
+            st.progress(latest_score / 8)
         else:
-            st.info("No compiled metrics data captured to display.")
+            st.info("Pass the diagnostic test inside Tab 2 to view performance analytics metrics.")
 
 
 
