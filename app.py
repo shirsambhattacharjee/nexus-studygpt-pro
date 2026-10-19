@@ -470,7 +470,7 @@ def is_safe(text):
 # AGENT CORE ORCHESTRATOR USING DIRECT GROQ API CLIENT
 
 def run_agent(role, instruction, target_input, retries=4, initial_delay=4):
-    model_name = "llama-3.3-70b-versatile" if role in ["EXPERT_WRITER", "QUIZ_GENERATOR"] else "llama-3.1-8b-instant"
+    model_name = "llama-3-70b-8192" if role in ["EXPERT_WRITER", "QUIZ_GENERATOR"] else "llama-3-8b-8192"
     delay = initial_delay
     for attempt in range(retries):
         try:
@@ -794,7 +794,7 @@ if execute_pipeline:
             """
             try:
                 response = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="llama-3-70b-8192",
                     response_format={"type": "json_object"},
                     messages=[{"role": "user", "content": quiz_prompt}]
                 )
