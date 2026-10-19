@@ -3,7 +3,7 @@ import streamlit as st
 import re
 import os
 import json
-from pdf2image import convert_from_bytes  
+from pdf2image import convert_from_bytes
 import io
 import docx
 import pandas as pd
@@ -12,7 +12,7 @@ from tools import get_live_wiki_details
 from reportlab.platypus import SimpleDocTemplate, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 from groq import Groq
-import time 
+import time
 import pytesseract
 import cv2
 import numpy as np
@@ -40,7 +40,7 @@ if "goal" not in st.session_state:
     st.session_state.goal = ""
 
 if "pending_goal" not in st.session_state:
-    st.session_state.pending_goal = ""    
+    st.session_state.pending_goal = ""
 
 
 # CONFIG & INITIALIZATION (MULTI-USER SETUP)
@@ -120,7 +120,6 @@ st.markdown("""
     background: rgba(15, 23, 42, 0.45);
     backdrop-filter: blur(30px);
     -webkit-backdrop-filter: blur(30px);
-    
 }
 .auth-title {
     font-size: 32px;
@@ -326,18 +325,16 @@ div[data-testid="stSidebar"] div[data-testid="column"]:nth-child(2) button:hover
     p{
         font-size:14px !important;
     }
-}        
-
+}
 </style>
 """, unsafe_allow_html=True)
 
-# MULTI-USER LOGIN AND REGISTER INTERFACE (CLEANED)
+# MULTI-USER LOGIN AND REGISTER INTERFACE
 
 if not st.session_state.authenticated:
     st.markdown("<div style='margin-top: 5%;'></div>", unsafe_allow_html=True)
     st.markdown("<h1 style='text-align:center;' class='hero-title'>⚡ NEXUS StudyGPT Pro</h1>", unsafe_allow_html=True)
     
-    # Unified Premium Glassmorphic Container
     st.markdown('<div class="auth-wrapper">', unsafe_allow_html=True)
     st.markdown('<p class="auth-title">Cognitive Gateway Portal</p>', unsafe_allow_html=True)
     st.markdown('<p class="auth-subtitle">Verify cryptographic credentials to spin up neural engines</p>', unsafe_allow_html=True)
@@ -452,7 +449,7 @@ def clear_history():
     st.rerun()
 
 
-# API SETUP & INTUITIVE MODEL ROUTING
+# API SETUP & INTUITIVE MODEL ROUTING (FIXED WITH EXPLICIT MODELS)
 
 api_key = os.getenv("GROQ_API_KEY")
 if not api_key:
@@ -505,11 +502,11 @@ def run_agent(role, instruction, target_input, retries=4, initial_delay=4):
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "rate limit" in error_msg or "429" in error_msg or "connection" in error_msg or "timeout" in error_msg or "overloaded" in error_msg:
+            if "rate limit" in error_msg or "429" in error_msg or "connection" in error_msg or "timeout" in error_msg or "overloaded" in error_msg or "notfound" in error_msg:
                 if attempt < retries - 1:
                     st.warning(f"⚠️ API/Network Congestion on {role}. Retrying in {delay}s... (Attempt {attempt+1}/{retries})")
                     time.sleep(delay)
-                    delay *= 2  
+                    delay *= 2 
                     continue
                 else:
                     st.error(f"🚨 Network link or API Token window completely exhausted for {role}.")
@@ -563,7 +560,6 @@ with st.sidebar:
             col1, col2 = st.columns([0.82, 0.18])
             
             with col1:
-                
                 display_name = item['topic'][:18] + "..." if len(item['topic']) > 18 else item['topic']
                 if st.button(f"📄 {display_name}", key=f"hist_view_{real_index}", use_container_width=True):
                     st.session_state.active_data = item
@@ -618,7 +614,7 @@ with chat_container:
                 st.success("Document attached successfully!")
                 st.session_state.goal = "Student document text:\n" + file_text[:15000]
             else:
-                st.error("🚨 No text could be read from this PDF.Is the file okay?")
+                st.error("🚨 No text could be read from this PDF. Is the file okay?")
 
     manual_deploy = st.button("Launch AI Workflow", type="primary", use_container_width=True)
     if manual_deploy:
@@ -698,7 +694,7 @@ if execute_pipeline:
             5. Maintain deep educational quality (exam + conceptual clarity).
 
             
-             📌 OUTPUT FORMAT (STRICT ORDER)
+            📌 OUTPUT FORMAT (STRICT ORDER)
             
 
             First output MUST be:
@@ -979,7 +975,6 @@ if st.session_state.active_data:
             st.progress(latest_score / 8)
         else:
             st.info("Pass the diagnostic test inside Tab 2 to view performance analytics metrics.")
-
 
 
 st.markdown("""
