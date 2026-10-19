@@ -471,6 +471,18 @@ def is_safe(text):
     return not any(word in BLOCKED_WORDS for word in words)
 
 
+def normalize_math_markdown(text):
+    """Normalize AI-generated LaTeX delimiters and Markdown escapes for Streamlit."""
+    text = str(text or "")
+    # Streamlit Markdown reliably renders $...$ and $$...$$ math delimiters.
+    text = re.sub(r"\\{1,2}\(", "$", text)
+    text = re.sub(r"\\{1,2}\)", "$", text)
+    text = re.sub(r"\\{1,2}\[", "$$", text)
+    text = re.sub(r"\\{1,2}\]", "$$", text)
+    # Undo AI escaping of Markdown markers, e.g. \*\*bold\*\*.
+    text = re.sub(r"\\([*_`])", r"\1", text)
+    return text
+
 # AGENT CORE ORCHESTRATOR USING DIRECT GROQ API CLIENT (USING ACTIVE WORKHORSE MODEL)
 
 def run_agent(role, instruction, target_input, retries=4, initial_delay=4):
@@ -925,7 +937,7 @@ if st.session_state.active_data:
         if "Error:" in data['notes']:
             st.error(data['notes'])
         else:
-            st.markdown(data['notes'])
+            st.markdown(normalize_math_markdown(data['notes']))
 
     with tab2:
         st.markdown("### 🎯 Dynamic Diagnostic Assessment Module")
@@ -944,11 +956,8 @@ if st.session_state.active_data:
             selections = []
             
             for i, q_item in enumerate(questions_list):
-                st.markdown(f"""
-                <div class="glass-card" style="margin-bottom: 18px; border-left: 4px solid #6366f1;">
-                    <p style="font-weight: 700; font-size: 1.1rem; margin-bottom: 10px; color: #ffffff;">Q{i+1}: {q_item.get('q', 'Question Item Schema')}</p>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"**Q{i+1}:**")
+                st.markdown(normalize_math_markdown(q_item.get("q", "Question Item Schema")))
                 
                 options = q_item.get("options", [])
                 if not isinstance(options, list): options = []
@@ -983,13 +992,13 @@ if st.session_state.active_data:
                 q_clean = q_part.strip()
                 a_clean = a_part.strip()
                 if q_clean and a_clean:
-                    st.markdown(f"""
-                    <div class="glowing-flashcard" style="padding:24px;">
-                        <h5 style="color: #818cf8; margin-top: 0; font-weight: 700;">⚡ Flashcard {card_counter}</h5>
-                        <p style="margin-bottom: 12px; font-size: 1.1rem; color: #ffffff;"><b style="color: #38bdf8;">Q:</b> {q_clean}</p>
-                        <p style="margin-top: 4px; font-size: 1rem; color: #cbd5e1;"><b style="color: #34d399;">A:</b> {a_clean}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    with st.container():
+                        st.markdown(f"### ⚡ Flashcard {card_counter}")
+                        st.markdown("**Q:**")
+                        st.markdown(normalize_math_markdown(q_clean))
+                        st.markdown("**A:**")
+                        st.markdown(normalize_math_markdown(a_clean))
+                        st.markdown("---")
                     card_counter += 1
         else:
             st.info("No structured flashcards found.")
