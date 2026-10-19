@@ -467,10 +467,11 @@ def is_safe(text):
     return not any(word in BLOCKED_WORDS for word in words)
 
 
-# AGENT CORE ORCHESTRATOR USING DIRECT GROQ API CLIENT
+# AGENT CORE ORCHESTRATOR USING DIRECT GROQ API CLIENT (USING ACTIVE WORKHORSE MODEL)
 
 def run_agent(role, instruction, target_input, retries=4, initial_delay=4):
-    model_name = "llama-3.3-70b-versatile" if role in ["EXPERT_WRITER", "QUIZ_GENERATOR"] else "llama-3.1-8b-instant"
+    # Using universally supported and stable production model on Groq
+    model_name = "llama-3.3-70b-versatile"
     delay = initial_delay
     for attempt in range(retries):
         try:
