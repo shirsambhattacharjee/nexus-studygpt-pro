@@ -1,4 +1,3 @@
-from langchain_openai import ChatOpenAI
 import streamlit as st
 import re
 import os
@@ -449,30 +448,14 @@ def clear_history():
     st.rerun()
 
 
-# API SETUP & INTUITIVE MODEL ROUTING (FIXED WITH EXPLICIT MODELS)
+# GROQ API SETUP (DIRECT NATIVE CLIENT)
 
 api_key = os.getenv("GROQ_API_KEY")
 if not api_key:
     st.error("Missing GROQ_API_KEY in .env file")
     st.stop()
 
-client_fast = ChatOpenAI(
-    api_key=api_key,
-    base_url="https://api.groq.com/openai/v1",
-    model="llama-3.1-8b-instant",
-    temperature=0.2,
-    timeout=20.0,
-    max_retries=3
-)
-
-client_smart = ChatOpenAI(
-    api_key=api_key,
-    base_url="https://api.groq.com/openai/v1",
-    model="llama-3.3-70b-versatile",
-    temperature=0.2,
-)
-
-groq_raw_client = Groq(api_key=api_key)
+groq_client = Groq(api_key=api_key)
 
 
 # SAFETY FILTER
@@ -484,25 +467,26 @@ def is_safe(text):
     return not any(word in BLOCKED_WORDS for word in words)
 
 
-# AGENT CORE ORCHESTRATOR WITH RETRY & LIMIT CONTROL
+# AGENT CORE ORCHESTRATOR USING DIRECT GROQ API CLIENT
 
 def run_agent(role, instruction, target_input, retries=4, initial_delay=4):
-    if role in ["EXPERT_WRITER", "QUIZ_GENERATOR"]:
-        selected_client = client_smart
-    else:
-        selected_client = client_fast
+    model_name = "llama-3.3-70b-versatile" if role in ["EXPERT_WRITER", "QUIZ_GENERATOR"] else "llama-3.1-8b-instant"
     delay = initial_delay
     for attempt in range(retries):
         try:
-            response = selected_client.invoke([
-                {"role": "system", "content": f"You are the {role}. {instruction}"},
-                {"role": "user", "content": target_input[:4000]}
-            ])
-            return response.content
+            response = groq_client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": f"You are the {role}. {instruction}"},
+                    {"role": "user", "content": target_input[:4000]}
+                ],
+                temperature=0.2
+            )
+            return response.choices[0].message.content
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "rate limit" in error_msg or "429" in error_msg or "connection" in error_msg or "timeout" in error_msg or "overloaded" in error_msg or "notfound" in error_msg:
+            if "rate limit" in error_msg or "429" in error_msg or "connection" in error_msg or "timeout" in error_msg or "overloaded" in error_msg or "not found" in error_msg:
                 if attempt < retries - 1:
                     st.warning(f"⚠️ API/Network Congestion on {role}. Retrying in {delay}s... (Attempt {attempt+1}/{retries})")
                     time.sleep(delay)
@@ -809,7 +793,7 @@ if execute_pipeline:
             }}
             """
             try:
-                response = groq_raw_client.chat.completions.create(
+                response = groq_client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     response_format={"type": "json_object"},
                     messages=[{"role": "user", "content": quiz_prompt}]
